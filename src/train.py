@@ -9,8 +9,9 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from src.utils import calculate_confidence,get_sources
-
+from utils import calculate_confidence,get_sources
+from rerank import rerank_documents
+from localmodel import generate_local_answer
 #To safely load the APIKEY without leaking it
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
@@ -144,20 +145,170 @@ Question:
         "generation_time":generation_time
     }
 
+# This function implements the reranked pipeline
+# Instead of directly sending FAISS results to Gemini,
+# we first retrieve more chunks and rerank them using a cross encoder
+
+def answer_question_rerank(question):
+
+    # First retrieve more chunks from FAISS
+    # We intentionally retrieve 20 because reranking
+    # will later select the best ones
+    start = time.time()
+
+    docs_and_scores = vectorstore.similarity_search_with_score(
+        question,
+        k=20
+    )
+
+    retrieval_time = float(
+        time.time() - start
+    )
+
+    # Using cross encoder reranking to improve relevance
+    docs = rerank_documents(
+        question,
+        docs_and_scores,
+        top_k=5
+    )
+
+    # Source metadata for citation
+    sources = get_sources(
+        docs
+    )
+
+    # Combining chunks into context
+    context = "\n\n".join(
+        doc.page_content
+        for doc in docs
+    )
+
+    # Prompt to avoid hallucination
+    prompt = f"""
+Answer using ONLY the provided context.
+
+If the answer is not contained in the context,
+say that the information is unavailable.
+
+Do not hallucinate.
+Organize answers clearly.
+Use bullet points when listing multiple items.
+
+Context:
+{context}
+
+Question:
+{question}
+"""
+
+    # Calling Gemini
+    start = time.time()
+
+    try:
+
+        response = llm.invoke(
+            prompt
+        )
+
+    except Exception:
+
+        return {
+            "answer":"Gemini API quota exceeded. Please try again later.",
+            "sources":sources,
+            "retrieval_time":retrieval_time,
+            "generation_time":0
+        }
+
+    generation_time = float(
+        time.time() - start
+    )
+
+    return {
+        "answer":response.content,
+        "sources":sources,
+        "retrieval_time":retrieval_time,
+        "generation_time":generation_time
+    }
+
+# This function implements the Local LLM pipeline
+# Retrieval is done by FAISS and answer generation is done locally using Ollama
+
+def answer_question_local(question):
+
+    start = time.time()
+
+    # Retrieving relevant chunks
+    docs_and_scores = vectorstore.similarity_search_with_score(
+        question,
+        k=5
+    )
+
+    retrieval_time = float(
+        time.time() - start
+    )
+
+    docs = []
+
+    scores = []
+
+    for doc, score in docs_and_scores:
+
+        docs.append(
+            doc
+        )
+        scores.append(
+            score
+        )
+
+    # Calculating confidence
+    confidence = calculate_confidence(
+        scores
+    )
+
+    # Source metadata for citations
+    sources = get_sources(
+        docs
+    )
+
+    # Combining retrieved chunks into context
+    context = "\n\n".join(
+        doc.page_content
+        for doc in docs
+    )
+
+    start = time.time()
+
+    # Generating answer locally
+    answer = generate_local_answer(
+        context,
+        question
+    )
+
+    generation_time = float(
+        time.time() - start
+    )
+
+    return {
+        "answer" : answer,
+        "confidence" : confidence,
+        "sources" : sources,
+        "retrieval_time" : retrieval_time,
+        "generation_time" : generation_time
+
+    }
 if __name__ == "__main__":
 
-    result = answer_question(
-        "What is self attention?"
+    result = answer_question_local(
+        "Explain self attention."
     )
 
     print("\nAnswer:\n")
 
-    print(result["answer"])
+    print(
+        result["answer"]
+    )
 
-    print("\nConfidence:")
-    print(result["confidence"])
-
-    print("\nSources:")
+    print("\nSources:\n")
 
     for source in result["sources"]:
 

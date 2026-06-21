@@ -3,7 +3,8 @@ uvicorn
 python-dotenv
 
 PyMuPDF
-
+numpy
+scikit-learn
 langchain
 langchain-core
 langchain-community
@@ -17,5 +18,5 @@ torch
 faiss-cpu
 
 google-generativeai
-
+pandas
 pydantic
