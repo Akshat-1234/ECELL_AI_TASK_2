@@ -1,283 +1,233 @@
-# Research Paper RAG Assistant
+# E-CELL AI Task 2
 
-This project implements a Retrieval-Augmented Generation (RAG) pipeline for answering questions from a collection of machine learning research papers. Instead of relying solely on the knowledge stored inside an LLM, the system first retrieves relevant information from papers and then generates answers based only on the retrieved context.
+This project implements a Retrieval-Augmented Generation (RAG) pipeline for answering questions from a collection of research papers. The system supports multiple retrieval and generation paths and includes basic evaluation metrics to compare them.
 
-The goal of this project was to build a simple but complete RAG system that supports source citation, confidence estimation, evaluation, and an API interface.
+## Overview
 
----
+The pipeline consists of:
 
-## Dataset
-
-The corpus consists of several well-known machine learning and NLP papers:
-
-- Attention Is All You Need
-- BERT
-- GPT-3
-- Llama 2
-- Sentence-BERT
-- LoRA: Low-Rank Adaptation of Large Language Models
-- Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks
-
-These papers were chosen because they cover different aspects of modern NLP and allow both single-document and cross-document reasoning.
+- PDF parsing and text extraction
+- Chunking with overlap
+- Embedding generation using Sentence Transformers
+- FAISS vector database for retrieval
+- Three different answer generation pipelines:
+  - API LLM (Gemini)
+  - API LLM + Reranking
+  - Local LLM (Ollama + Llama 3.2)
+- FastAPI interface
+- Evaluation framework for comparing different approaches
 
 ---
 
-## Project Structure
+## Folder Structure
 
 ```
 ECELL_AI_TASK_2
 │
-├── api
+├── api/
 │   └── app.py
 │
-├── .env
+├── data/
+│   ├── pdfs/
+│   └── vectorstore/
 │
-├── data
-│   ├── pdfs
-│   └── vectorstore
-│
-├── src
+├── src/
 │   ├── preprocess.py
 │   ├── features.py
 │   ├── train.py
+│   ├── rerank.py
+│   ├── localmodel.py
+│   ├── metrics.py
 │   ├── evaluate.py
-│   ├── utils.py
-│   └── __init__.py
+│   └── utils.py
 │
 ├── requirements.txt
-└── README.md
+├── REPORT.md
+└── test_locals.py
 ```
 
 ---
 
 ## Pipeline
 
-The overall workflow is fairly straightforward:
+### 1. Document Processing
 
-```
-PDFs
-↓
-Text Extraction
-↓
-Chunking
-↓
-Sentence Embeddings
-↓
-FAISS Vector Database
-↓
-Similarity Search
-↓
-Gemini
-↓
-Answer + Sources + Confidence
-```
-
----
-
-## Document Processing
-
-PDFs are processed using **PyMuPDF**.
-
-Instead of treating each paper as one large document, text is extracted page by page. This allows page numbers to be preserved, making source attribution easier later.
-
-The text is split using `RecursiveCharacterTextSplitter`.
-
-Parameters used:
+Research papers are loaded using PyMuPDF. Text is extracted page-wise and split into chunks using:
 
 - Chunk size = 1000
-- Chunk overlap = 200
+- Overlap = 200
 
-This overlap helps preserve context between neighboring chunks.
-
-A total of 1056 chunks were generated from the paper collection.
+Page information is stored as metadata for later citation.
 
 ---
 
-## Embeddings and Vector Store
+### 2. Embeddings and Vector Store
 
-Each chunk is converted into embeddings using:
+Embeddings are generated using:
 
 ```
 sentence-transformers/all-MiniLM-L6-v2
 ```
 
-The embeddings are stored inside a FAISS vector database, which enables efficient semantic search over the document collection.
+The embeddings are stored locally using FAISS.
 
 ---
 
-## Retrieval and Generation
+## Implemented Pipelines
 
-When a query is received:
+### API LLM
 
-1. The query is converted into an embedding.
-2. FAISS retrieves the most relevant chunks.
-3. Retrieved chunks are combined into a context.
-4. Gemini 2.5 Flash Lite generates an answer.
-5. Source papers and page numbers are returned along with the response.
+```
+Question
+↓
+FAISS Retrieval
+↓
+Gemini API
+↓
+Answer
+```
 
-To reduce hallucinations, the model is instructed to answer only using the provided context.
+Uses Gemini Flash to generate responses from retrieved chunks.
 
 ---
 
-## Evaluation
+### API LLM + Rerank
 
-Different values of **k** were tested:
+```
+Question
+↓
+FAISS Top 20
+↓
+Cross Encoder Reranker
+↓
+Top 5 Chunks
+↓
+Gemini API
+↓
+Answer
+```
 
-- k = 3
-- k = 5
-- k = 10
-- k = 20
+The reranker uses:
 
-Increasing k improved recall but also increased latency and occasionally introduced irrelevant context.
+```
+cross-encoder/ms-marco-MiniLM-L-6-v2
+```
 
-Among the tested values, **k = 5** gave the best balance between retrieval quality and response time.
+to improve retrieval quality before generation.
 
 ---
 
-## Example Queries
+### Local LLM
 
-### Single Paper Queries
+```
+Question
+↓
+FAISS Retrieval
+↓
+Llama 3.2 (Ollama)
+↓
+Answer
+```
 
-- Explain self attention.
-- What is masked language modeling?
-- What is Low Rank Adaptation?
-- What is in-context learning?
-
-### Cross Paper Queries
-
-- Compare BERT and GPT-3.
-- Compare GPT-3 and Llama 2.
-- How does RAG address limitations of GPT-3?
-- Why is LoRA useful for fine-tuning Llama models?
-- How have large language models evolved from Transformers to GPT-3 and Llama 2?
-
-These queries test the model's ability to synthesize information across multiple papers rather than simply retrieve isolated facts.
+This path avoids external APIs and performs generation locally.
 
 ---
 
-## API
+## FastAPI Interface
 
-The project uses FastAPI to expose the pipeline through a REST API.
+The project exposes a simple API.
 
-### Endpoint
-
-```
-POST /query
-```
-
-Request:
-
-```json
-{
-  "query": "Explain self attention."
-}
-```
-
-Response:
-
-```json
-{
-  "answer": "...",
-  "confidence": 0.89,
-  "sources": [
-    {
-      "file": "Attention Is All You Need.pdf",
-      "page": 3
-    }
-  ],
-  "retrieval_time": 0.02,
-  "generation_time": 1.84
-}
-```
-
-Swagger documentation can be accessed at:
-
-```
-http://127.0.0.1:8000/docs
-```
-
----
-
-## Installation
-
-Clone the repository:
-
-```bash
-git clone <repository-url>
-cd ECELL_AI_TASK_2
-```
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-## Running the Project
-
-### Generate chunks
-
-```bash
-python src/preprocess.py
-```
-
-### Build vector database
-
-```bash
-python src/features.py
-```
-
-### Test retrieval pipeline
-
-```bash
-python src/train.py
-```
-
-### Run evaluation
-
-```bash
-python src/evaluate.py
-```
-
-### Start API
+Start the server:
 
 ```bash
 uvicorn api.app:app --reload
 ```
 
-Open:
+Example request:
 
+```json
+{
+    "query": "Explain self attention."
+}
 ```
-http://127.0.0.1:8000/docs
+
+---
+
+## Evaluation
+
+The following metrics are implemented:
+
+### Context Relevance (CR)
+
+Measures how relevant retrieved chunks are to the query.
+
+### Answer Relevance (AR)
+
+Measures semantic similarity between the query and generated answer.
+
+### Query Resolution Rate (QR)
+
+Checks whether a query received a valid answer.
+
+### Latency
+
+Tracks retrieval and generation times.
+
+---
+
+## Running the Project
+
+### Build chunks
+
+```bash
+python src/preprocess.py
+```
+
+### Create embeddings and vector database
+
+```bash
+python src/features.py
+```
+
+### Test the pipelines
+
+```bash
+python src/train.py
+```
+
+### Evaluate
+
+```bash
+python src/evaluate.py
+```
+
+### Start FastAPI
+
+```bash
+uvicorn api.app:app --reload
 ```
 
 ---
 
-## Limitations
+## Libraries Used
 
-The confidence score is derived from similarity scores and should not be interpreted as answer correctness.
-
-The system currently uses only dense retrieval and does not employ reranking methods.
-
-Generation quality is also dependent on Gemini API availability and quota limits.
-
----
-
-## Future Improvements
-
-Some possible extensions include:
-
-- Hybrid search using BM25 and dense embeddings.
-- Cross-encoder reranking.
-- RAGAS evaluation metrics.
-- Query rewriting and expansion.
-- Agentic RAG workflows.
-- Support for larger document collections.
+- LangChain
+- FAISS
+- Sentence Transformers
+- HuggingFace Embeddings
+- Gemini API
+- Ollama
+- FastAPI
+- PyMuPDF
+- Pandas
+- Scikit-learn
 
 ---
 
-## Final Thoughts
+## Notes
 
-This project was built as an attempt to understand the complete RAG pipeline rather than simply use a high-level framework. While the system itself is fairly simple, building it from scratch helped in understanding document preprocessing, embeddings, vector databases, retrieval strategies, prompt design, and API deployment. It also highlighted some practical challenges such as PDF extraction issues, retrieval quality trade-offs, and API limitations.
+- Research papers are stored locally under `data/pdfs`.
+- FAISS indices are serialized and stored under `data/vectorstore`.
+- Local inference is performed using Ollama with Llama 3.2.
+- Cross-encoder reranking is used to improve retrieval quality for complex queries.
+- Evaluation results can be exported to CSV for comparison across pipelines.

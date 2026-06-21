@@ -1,16 +1,34 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+from typing import Optional, Literal
 
-# Importing the main RAG pipeline
-from src.train import answer_question
+# Importing all three RAG pipelines
+from src.train import (
+    answer_question,
+    answer_question_rerank,
+    answer_question_local,
+)
 
 # Creating FastAPI application
 app = FastAPI()
 
+# Maps the "pipeline" field in the request to the actual function to call.
+# Keeping this as a simple dict means adding a 4th pipeline later is a
+# one-line change here, nothing else in this file needs to move.
+PIPELINES = {
+    "api": answer_question,
+    "rerank": answer_question_rerank,
+    "local": answer_question_local,
+}
+
+
 # Input schema for user queries
-# User sends question in json format
+# User sends question in json format, with an optional pipeline choice.
+# Defaults to "api" so any existing client that doesn't send a
+# "pipeline" field at all still gets the original behavior.
 class QueryRequest(BaseModel):
-    query : str
+    query: str
+    pipeline: Optional[Literal["api", "rerank", "local"]] = "api"
 
 
 # Home endpoint
@@ -19,27 +37,35 @@ class QueryRequest(BaseModel):
 def home():
 
     return {
-        "message":"RAG API is running successfully"
+        "message": "RAG API is running successfully",
+        "available_pipelines": list(PIPELINES.keys()),
     }
 
 
 # Main endpoint for question answering
-# User sends a query and receives answer, confidence and sources
+# User sends a query (and optionally picks a pipeline) and receives
+# answer, confidence and sources.
 @app.post("/query")
 def query(request: QueryRequest):
 
-    # Passing user question to the RAG pipeline
-    result = answer_question(
+    pipeline_fn = PIPELINES[request.pipeline]
+
+    # Passing user question to the selected RAG pipeline
+    result = pipeline_fn(
         request.query
     )
 
-    # Returning everything in json format
+    # Returning everything in json format.
+    # All three pipelines now return the same shape (see train.py),
+    # so this response building stays identical regardless of which
+    # pipeline was used — nothing pipeline-specific needed here.
     return {
+        "pipeline": request.pipeline,
         "answer": result["answer"],
-        "confidence": float(result["confidence"]),
+        "confidence": float(result.get("confidence", 0.0)),
         "sources": result["sources"],
         "retrieval_time": round(
-            float(result["retrieval_time"]),
+            float(result.get("retrieval_time", 0.0)),
             4
         ),
         "generation_time": round(
@@ -52,6 +78,7 @@ def query(request: QueryRequest):
             4
         )
     }
+
 
 # For local testing
 if __name__ == "__main__":

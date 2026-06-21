@@ -4,7 +4,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from pathlib import Path
 
 # Importing documents created in preprocess.py
-from preprocess import documents
+from src.preprocess import documents
 
 BASE_DIR = Path(__file__).parent.parent
 
